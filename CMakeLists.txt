@@ -341,15 +341,32 @@ endif()
 ################################################################################
 # Option to control what type of library we build
 ################################################################################
-option(Z3_BUILD_LIBZ3_SHARED "Build libz3 as a shared library if true, otherwise build a static library" ON)
-option(Z3_BUILD_LIBZ3_MSVC_STATIC "Link libz3 against the static MSVC runtime (/MT) so the binaries do not depend on the VC++ redistributable" ON)
+# Default to a static library. Consumers that want the shared library
+# (z3.dll / libz3.so) pass -DZ3_BUILD_LIBZ3_SHARED=ON; the CI builds both.
+option(Z3_BUILD_LIBZ3_SHARED "Build libz3 as a shared library if true, otherwise build a static library" OFF)
 
-# Select the static MSVC runtime through the CMAKE_MSVC_RUNTIME_LIBRARY
-# abstraction (policy CMP0091, active because cmake_minimum_required is >= 3.15).
-# The old build replaced "/MD" with "/MT" inside CMAKE_CXX_FLAGS, but modern CMake
-# no longer stores the runtime selection in the flag string, so that replacement
-# silently did nothing and the binaries still linked the dynamic runtime.
-if (MSVC AND Z3_BUILD_LIBZ3_MSVC_STATIC)
+# MSVC runtime library (/MT vs /MD).
+#
+# The default is the normal CMake default (/MD, the dynamic runtime), so that
+# consuming this fork as a subproject (FetchContent / add_subdirectory) matches
+# a typical parent project and does not cause LNK2038 runtime-library clashes.
+#
+# To pick a runtime, use the standard CMake variable, which supports every
+# variant:
+#   -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded          (/MT)
+#   -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL        (/MD, default)
+#   -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDebug      (/MTd)
+#   -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDebugDLL   (/MDd)
+#
+# Z3_BUILD_LIBZ3_MSVC_STATIC is a convenience shortcut for the common "/MT so the
+# binary needs no VC++ redistributable" case (this is what the CI uses). An
+# explicit CMAKE_MSVC_RUNTIME_LIBRARY always wins over the shortcut.
+option(Z3_BUILD_LIBZ3_MSVC_STATIC "Shortcut for CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded (/MT), so libz3 needs no VC++ redistributable" OFF)
+
+# CMAKE_MSVC_RUNTIME_LIBRARY selection works because policy CMP0091 is active
+# (cmake_minimum_required is >= 3.15). Only apply the shortcut when the consumer
+# has not set CMAKE_MSVC_RUNTIME_LIBRARY explicitly.
+if (MSVC AND Z3_BUILD_LIBZ3_MSVC_STATIC AND NOT CMAKE_MSVC_RUNTIME_LIBRARY)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 

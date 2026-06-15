@@ -1,5 +1,9 @@
 # Z3
 
+> **This fork** packages Z3 4.16.0 as a build that produces dependency-free
+> libraries (no VC++ redistributable on Windows) and is easy to consume from
+> CMake and Rust. See [About this fork](#about-this-fork) below.
+
 Z3 is a theorem prover from Microsoft Research. 
 It is licensed under the [MIT license](LICENSE.txt). Windows binary distributions include [C++ runtime redistributables](https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/)
 
@@ -290,5 +294,67 @@ to Z3's C API. For more information, see [MachineArithmetic/README.md](https://g
 
 ## Power Tools
 * The [Axiom Profiler](https://github.com/viperproject/axiom-profiler-2) currently developed by ETH Zurich
+
+## About this fork
+
+This fork keeps Z3 4.16.0 unchanged at the API level and only adjusts the build
+so the resulting libraries are easy to ship and embed:
+
+- The Windows libraries can be built with the static MSVC runtime (`/MT`), so
+  they need no VC++ redistributable; the shared library is named `z3.dll`.
+- The library only is built by default (no `z3` executable or tests).
+- CI builds `windows`/`linux` x64 and x86, both shared and static, and publishes
+  them on a 4-part tag `vMAJOR.MINOR.PATCH.<build>` with a rolling 3-part alias
+  tag `vMAJOR.MINOR.PATCH`. Windows shared archives also include the PDB.
+
+### Build options
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `Z3_BUILD_LIBZ3_SHARED` | `OFF` (static) | `ON` builds the shared library (`z3.dll` / `libz3.so`) |
+| `Z3_BUILD_LIBZ3_MSVC_STATIC` | `OFF` (`/MD`) | `ON` is a shortcut for `/MT` (no VC++ redistributable) |
+| `CMAKE_MSVC_RUNTIME_LIBRARY` | unset (`/MD`) | Standard CMake runtime selection: `MultiThreaded` (`/MT`), `MultiThreadedDLL` (`/MD`), `MultiThreadedDebug` (`/MTd`), `MultiThreadedDebugDLL` (`/MDd`). An explicit value wins over `Z3_BUILD_LIBZ3_MSVC_STATIC`. |
+
+### Consume from CMake with FetchContent
+
+Builds Z3 from source and exposes the `z3::z3` target. The default is a static
+library that uses the dynamic CRT (`/MD`), which matches a typical consumer:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(z3
+    GIT_REPOSITORY https://github.com/tinysec/z3.git
+    GIT_TAG        v4.16.0)
+FetchContent_MakeAvailable(z3)
+
+target_link_libraries(your_target PRIVATE z3::z3)
+```
+
+To build the shared library instead, set `set(Z3_BUILD_LIBZ3_SHARED ON)` before
+`FetchContent_MakeAvailable`. Building Z3 from source requires Python 3 and, on
+Windows, Visual Studio.
+
+### Consume from Rust
+
+Use the upstream `z3` / `z3-sys` crates (no fork needed — the C API is identical)
+and point them at this fork's prebuilt static library. On Windows, build the
+static library with `/MT` and match it from Rust with the static CRT:
+
+```toml
+# .cargo/config.toml
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+```
+
+```rust
+// build.rs
+fn main() {
+    println!("cargo:rustc-link-search=native=<dir containing z3.lib>");
+    // z3-sys emits link-lib=z3, which resolves to z3.lib (the static archive on Windows).
+}
+```
+
+Set `Z3_SYS_Z3_HEADER` to this fork's `src/api/z3.h`. The Z3 C++ runtime is
+pulled in automatically by the static library's embedded default-lib directives.
 
 
