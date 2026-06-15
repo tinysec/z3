@@ -208,7 +208,7 @@ jobs:
         with:
           path: dist
 
-      - name: Publish versioned release and move alias tag
+      - name: Publish versioned release, move alias tag, refresh rolling release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
@@ -216,14 +216,33 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 1. Immutable per-build release on the 4-part tag (also marked latest).
+          # 1. Immutable per-build release on the 4-part tag, kept as "latest".
+          #    Its assets carry the build number (z3-v4.16.0.7-windows-x64-...).
           gh release create "${VERSION}" \
             --target "${GITHUB_SHA}" \
             --title "${VERSION}" \
-            --notes "Automated build of Z3 ${ALIAS#v} (build ${GITHUB_RUN_NUMBER}) for windows/linux x64 and x86. Windows libraries use the static CRT; Linux libraries statically link libstdc++/libgcc. No external runtime required." \
+            --notes "Automated build of Z3 ${ALIAS#v} (build ${GITHUB_RUN_NUMBER}) for windows/linux x64 and x86." \
             --latest \
             $(find dist -type f | sort)
 
           # 2. Re-point the 3-part alias tag to this build's commit.
           git tag --force "${ALIAS}" "${GITHUB_SHA}"
           git push --force origin "refs/tags/${ALIAS}"
+
+          # 3. Refresh the rolling release on the 3-part alias tag. Its assets drop
+          #    the build number so the download URLs are stable across builds, e.g.
+          #    releases/download/v4.16.0/z3-windows-x64-shared.zip. It is not marked
+          #    "latest" so the immutable versioned release stays canonical.
+          mkdir -p alias
+          for f in $(find dist -type f); do
+            base="$(basename "${f}")"
+            cp "${f}" "alias/z3-${base#z3-${VERSION}-}"
+          done
+
+          gh release delete "${ALIAS}" --yes --cleanup-tag=false || true
+          gh release create "${ALIAS}" \
+            --target "${GITHUB_SHA}" \
+            --title "${ALIAS} (latest: ${VERSION})" \
+            --notes "Rolling release tracking the latest build (currently ${VERSION}). Asset names are stable across builds for fixed download URLs." \
+            --latest=false \
+            $(find alias -type f | sort)
