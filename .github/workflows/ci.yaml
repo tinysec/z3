@@ -59,7 +59,7 @@ jobs:
             cmake_platform: Win32
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Configure shared library (z3.dll)
         run: >
@@ -124,7 +124,7 @@ jobs:
             extra_packages: "gcc-multilib g++-multilib"
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Install 32-bit toolchain
         if: matrix.extra_packages != ''
@@ -189,7 +189,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
