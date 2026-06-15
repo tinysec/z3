@@ -138,6 +138,15 @@ elseif (NOT Z3_BUILD_EXECUTABLE)
   set_target_properties(libz3 PROPERTIES OUTPUT_NAME z3)
 endif()
 
+# Provide a namespaced alias so consumers that build Z3 from source via
+# FetchContent / add_subdirectory can link it as z3::z3 — the same target name
+# the prebuilt package/ directory exposes. With Z3_BUILD_LIBZ3_SHARED=OFF this
+# alias resolves to the static library (used by C/C++ and Rust consumers); with
+# ON it resolves to the shared library.
+if (NOT TARGET z3::z3)
+  add_library(z3::z3 ALIAS libz3)
+endif()
+
 # The `PRIVATE` usage requirement is specified so that when building Z3 as a
 # shared library the dependent libraries are specified on the link command line
 # so that if those are also shared libraries they are referenced by `libz3.so`.
