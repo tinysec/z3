@@ -44,9 +44,11 @@ jobs:
           echo "Versioned tag: ${VERSION}"
 
   # 2. Windows libraries: z3.dll (shared) and z3.lib (static), both static-CRT.
+  # Pinned to windows-2022 because the "Visual Studio 17 2022" generator must be
+  # present; windows-latest has moved to a newer image without VS 2022.
   build-windows:
     needs: version
-    runs-on: windows-latest
+    runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
@@ -57,7 +59,7 @@ jobs:
             cmake_platform: Win32
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configure shared library (z3.dll)
         run: >
@@ -122,7 +124,7 @@ jobs:
             extra_packages: "gcc-multilib g++-multilib"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install 32-bit toolchain
         if: matrix.extra_packages != ''
@@ -187,7 +189,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
