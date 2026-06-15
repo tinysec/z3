@@ -141,7 +141,9 @@ jobs:
           "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc ${{ matrix.bits }}"
 
       - name: Build shared library
-        run: cmake --build build-shared --target libz3 --parallel
+        # Explicit job count: a bare --parallel makes Make use unlimited jobs,
+        # which exhausts the runner's memory and gets it killed (exit 143).
+        run: cmake --build build-shared --target libz3 --parallel "$(nproc)"
 
       - name: Configure static library (libz3.a)
         run: >
@@ -151,7 +153,7 @@ jobs:
           "-DCMAKE_CXX_FLAGS=${{ matrix.bits }}"
 
       - name: Build static library
-        run: cmake --build build-static --target libz3 --parallel
+        run: cmake --build build-static --target libz3 --parallel "$(nproc)"
 
       - name: Package release archives
         run: |
