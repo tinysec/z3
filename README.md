@@ -303,9 +303,13 @@ so the resulting libraries are easy to ship and embed:
 - The Windows libraries can be built with the static MSVC runtime (`/MT`), so
   they need no VC++ redistributable; the shared library is named `z3.dll`.
 - The library only is built by default (no `z3` executable or tests).
-- CI builds `windows`/`linux` x64 and x86 and publishes them on a 4-part tag
-  `vMAJOR.MINOR.PATCH.<build>` with a rolling 3-part alias tag
-  `vMAJOR.MINOR.PATCH`. Windows shared archives also include the PDB.
+- CI builds `windows`/`linux` x64 and x86 and publishes them as two releases:
+  an immutable per-build release on the 4-part tag `vMAJOR.MINOR.PATCH.<build>`
+  (assets carry the build number), and a rolling release on the 3-part tag
+  `vMAJOR.MINOR.PATCH` that always tracks the latest build. The rolling release's
+  asset names omit the build number, so they have stable download URLs such as
+  `releases/download/vMAJOR.MINOR.PATCH/z3-windows-x64-shared.zip`. Windows shared
+  archives also include the PDB.
 
 The Windows static library is published in two runtime variants because a static
 library's CRT must match the consumer's, so a prebuilt static library is only
