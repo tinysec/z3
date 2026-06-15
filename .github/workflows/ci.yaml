@@ -43,8 +43,18 @@ jobs:
           echo "Alias tag:     ${ALIAS}"
           echo "Versioned tag: ${VERSION}"
 
-  # 2. Windows libraries: z3.dll (shared) and z3.lib (static), both static-CRT.
-  # Each (architecture, link type) is its own job so they build in parallel.
+  # 2. Windows libraries: z3.dll (shared) and z3.lib (static). Each variant is
+  # its own job so they build in parallel.
+  #
+  # The shared DLL is built with the static CRT (/MT) only: it is self-contained
+  # (no VC++ redistributable) and the CRT is isolated behind the DLL boundary, so
+  # one /MT DLL works for any consumer.
+  #
+  # The static library is shipped in BOTH /MT and /MD because a static library's
+  # CRT must match the consumer's: /MT for consumers that statically link the CRT
+  # (no VC++ redistributable, e.g. Rust +crt-static), /MD for the usual dynamic
+  # CRT. Shipping only one would force the other half of consumers to rebuild.
+  #
   # Pinned to windows-2022 because the "Visual Studio 17 2022" generator must be
   # present; windows-latest has moved to a newer image without VS 2022.
   build-windows:
@@ -54,21 +64,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x64, cmake_platform: x64,   link: shared, shared: "ON"  }
-          - { arch: x64, cmake_platform: x64,   link: static, shared: "OFF" }
-          - { arch: x86, cmake_platform: Win32, link: shared, shared: "ON"  }
-          - { arch: x86, cmake_platform: Win32, link: static, shared: "OFF" }
+          - { arch: x64, cmake_platform: x64,   link: shared, shared: "ON",  runtime: MultiThreaded,    label: shared }
+          - { arch: x86, cmake_platform: Win32, link: shared, shared: "ON",  runtime: MultiThreaded,    label: shared }
+          - { arch: x64, cmake_platform: x64,   link: static, shared: "OFF", runtime: MultiThreaded,    label: static-mt }
+          - { arch: x64, cmake_platform: x64,   link: static, shared: "OFF", runtime: MultiThreadedDLL, label: static-md }
+          - { arch: x86, cmake_platform: Win32, link: static, shared: "OFF", runtime: MultiThreaded,    label: static-mt }
+          - { arch: x86, cmake_platform: Win32, link: static, shared: "OFF", runtime: MultiThreadedDLL, label: static-md }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Configure
-        # Z3_BUILD_LIBZ3_MSVC_STATIC=ON forces /MT so the released binaries need
-        # no VC++ redistributable (the repo default is /MD for subproject use).
+        # CMAKE_MSVC_RUNTIME_LIBRARY selects the CRT: MultiThreaded = /MT (no VC++
+        # redistributable), MultiThreadedDLL = /MD (dynamic CRT).
         run: >
           cmake -B build -S . -G "Visual Studio 17 2022" -A ${{ matrix.cmake_platform }}
           -DZ3_BUILD_LIBZ3_SHARED=${{ matrix.shared }}
-          -DZ3_BUILD_LIBZ3_MSVC_STATIC=ON
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=${{ matrix.runtime }}
 
       - name: Build
         run: cmake --build build --config Release --target libz3 --parallel
@@ -79,6 +91,7 @@ jobs:
         run: |
           $version = "${{ needs.version.outputs.version }}"
           $arch = "${{ matrix.arch }}"
+          $label = "${{ matrix.label }}"
 
           New-Item -ItemType Directory -Force pkg/bin, pkg/lib, pkg/include/c++ | Out-Null
           Copy-Item build/Release/z3.dll pkg/bin/
@@ -87,7 +100,7 @@ jobs:
           Copy-Item src/api/z3*.h pkg/include/
           Copy-Item src/api/c++/z3++.h pkg/include/c++/
           Copy-Item build/src/util/z3_version.h pkg/include/
-          Compress-Archive -Path pkg/* -DestinationPath "z3-$version-windows-$arch-shared.zip"
+          Compress-Archive -Path pkg/* -DestinationPath "z3-$version-windows-$arch-$label.zip"
 
       - name: Package static archive (z3.lib + headers)
         if: matrix.link == 'static'
@@ -95,18 +108,19 @@ jobs:
         run: |
           $version = "${{ needs.version.outputs.version }}"
           $arch = "${{ matrix.arch }}"
+          $label = "${{ matrix.label }}"
 
           New-Item -ItemType Directory -Force pkg/lib, pkg/include/c++ | Out-Null
           Copy-Item build/Release/z3.lib pkg/lib/
           Copy-Item src/api/z3*.h pkg/include/
           Copy-Item src/api/c++/z3++.h pkg/include/c++/
           Copy-Item build/src/util/z3_version.h pkg/include/
-          Compress-Archive -Path pkg/* -DestinationPath "z3-$version-windows-$arch-static.zip"
+          Compress-Archive -Path pkg/* -DestinationPath "z3-$version-windows-$arch-$label.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: z3-windows-${{ matrix.arch }}-${{ matrix.link }}
+          name: z3-windows-${{ matrix.arch }}-${{ matrix.label }}
           path: z3-*.zip
 
   # 3. Linux libraries: libz3.so (shared) and libz3.a (static).

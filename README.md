@@ -303,9 +303,21 @@ so the resulting libraries are easy to ship and embed:
 - The Windows libraries can be built with the static MSVC runtime (`/MT`), so
   they need no VC++ redistributable; the shared library is named `z3.dll`.
 - The library only is built by default (no `z3` executable or tests).
-- CI builds `windows`/`linux` x64 and x86, both shared and static, and publishes
-  them on a 4-part tag `vMAJOR.MINOR.PATCH.<build>` with a rolling 3-part alias
-  tag `vMAJOR.MINOR.PATCH`. Windows shared archives also include the PDB.
+- CI builds `windows`/`linux` x64 and x86 and publishes them on a 4-part tag
+  `vMAJOR.MINOR.PATCH.<build>` with a rolling 3-part alias tag
+  `vMAJOR.MINOR.PATCH`. Windows shared archives also include the PDB.
+
+The Windows static library is published in two runtime variants because a static
+library's CRT must match the consumer's, so a prebuilt static library is only
+directly usable when the runtimes agree:
+
+- `...-static-mt.zip` — built with `/MT` (static CRT, no VC++ redistributable;
+  use with Rust `+crt-static` or other `/MT` projects).
+- `...-static-md.zip` — built with `/MD` (dynamic CRT; use with the usual `/MD`
+  projects).
+
+The shared (`z3.dll`) archive is `/MT` only: the DLL is self-contained and its
+CRT is isolated behind the DLL boundary, so it works for any consumer.
 
 ### Build options
 
