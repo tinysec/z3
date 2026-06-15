@@ -1,0 +1,217 @@
+name: CI
+
+# Single consolidated pipeline for this library-only fork.
+#
+# Stages:
+#   1. version       - compute the version strings once.
+#   2. build-windows - z3.dll / z3.lib for x64 and x86 (static CRT, no VC++ redistributable).
+#   3. build-linux   - libz3.so / libz3.a for x64 and x86 (static libstdc++/libgcc).
+#   4. release       - publish an immutable release on the 4-part tag
+#                      vMAJOR.MINOR.PATCH.<build> and force-move the 3-part alias
+#                      tag vMAJOR.MINOR.PATCH to the same commit.
+#
+# The semantic version is fixed below; only the build number changes per run.
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  VERSION_MAJOR: "4"
+  VERSION_MINOR: "16"
+  VERSION_PATCH: "0"
+
+jobs:
+  # 1. Compute the version strings once and share them with downstream jobs.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      alias: ${{ steps.compute.outputs.alias }}
+    steps:
+      - name: Compute version strings
+        id: compute
+        run: |
+          ALIAS="v${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}"
+          VERSION="${ALIAS}.${GITHUB_RUN_NUMBER}"
+          echo "alias=${ALIAS}" >> "${GITHUB_OUTPUT}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "Alias tag:     ${ALIAS}"
+          echo "Versioned tag: ${VERSION}"
+
+  # 2. Windows libraries: z3.dll (shared) and z3.lib (static), both static-CRT.
+  build-windows:
+    needs: version
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            cmake_platform: x64
+          - arch: x86
+            cmake_platform: Win32
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure shared library (z3.dll)
+        run: >
+          cmake -B build-shared -S . -G "Visual Studio 17 2022" -A ${{ matrix.cmake_platform }}
+          -DZ3_BUILD_LIBZ3_SHARED=ON
+
+      - name: Build shared library
+        run: cmake --build build-shared --config Release --target libz3 --parallel
+
+      - name: Configure static library (z3.lib)
+        run: >
+          cmake -B build-static -S . -G "Visual Studio 17 2022" -A ${{ matrix.cmake_platform }}
+          -DZ3_BUILD_LIBZ3_SHARED=OFF
+
+      - name: Build static library
+        run: cmake --build build-static --config Release --target libz3 --parallel
+
+      - name: Package release archives
+        shell: pwsh
+        run: |
+          $version = "${{ needs.version.outputs.version }}"
+          $arch = "${{ matrix.arch }}"
+
+          # 1. Collect public headers (source headers + generated z3_version.h).
+          New-Item -ItemType Directory -Force include, include/c++ | Out-Null
+          Copy-Item src/api/z3*.h include/
+          Copy-Item src/api/c++/z3++.h include/c++/
+          Copy-Item build-shared/src/util/z3_version.h include/
+
+          # 2. Shared package: z3.dll + import library + headers.
+          New-Item -ItemType Directory -Force pkg-shared/bin, pkg-shared/lib | Out-Null
+          Copy-Item build-shared/Release/z3.dll pkg-shared/bin/
+          Copy-Item build-shared/Release/z3.lib pkg-shared/lib/
+          Copy-Item include pkg-shared/include -Recurse
+          Compress-Archive -Path pkg-shared/* -DestinationPath "z3-$version-windows-$arch-shared.zip"
+
+          # 3. Static package: z3.lib + headers.
+          New-Item -ItemType Directory -Force pkg-static/lib | Out-Null
+          Copy-Item build-static/Release/z3.lib pkg-static/lib/
+          Copy-Item include pkg-static/include -Recurse
+          Compress-Archive -Path pkg-static/* -DestinationPath "z3-$version-windows-$arch-static.zip"
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: z3-windows-${{ matrix.arch }}
+          path: z3-*.zip
+
+  # 3. Linux libraries: libz3.so (shared) and libz3.a (static).
+  build-linux:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            bits: ""
+            extra_packages: ""
+          - arch: x86
+            bits: "-m32"
+            extra_packages: "gcc-multilib g++-multilib"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install 32-bit toolchain
+        if: matrix.extra_packages != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.extra_packages }}
+
+      - name: Configure shared library (libz3.so, static libstdc++/libgcc)
+        run: >
+          cmake -B build-shared -S . -DCMAKE_BUILD_TYPE=Release
+          -DZ3_BUILD_LIBZ3_SHARED=ON
+          "-DCMAKE_C_FLAGS=${{ matrix.bits }}"
+          "-DCMAKE_CXX_FLAGS=${{ matrix.bits }}"
+          "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc ${{ matrix.bits }}"
+
+      - name: Build shared library
+        run: cmake --build build-shared --target libz3 --parallel
+
+      - name: Configure static library (libz3.a)
+        run: >
+          cmake -B build-static -S . -DCMAKE_BUILD_TYPE=Release
+          -DZ3_BUILD_LIBZ3_SHARED=OFF
+          "-DCMAKE_C_FLAGS=${{ matrix.bits }}"
+          "-DCMAKE_CXX_FLAGS=${{ matrix.bits }}"
+
+      - name: Build static library
+        run: cmake --build build-static --target libz3 --parallel
+
+      - name: Package release archives
+        run: |
+          set -euo pipefail
+          version="${{ needs.version.outputs.version }}"
+          arch="${{ matrix.arch }}"
+
+          # 1. Collect public headers (source headers + generated z3_version.h).
+          mkdir -p include/c++
+          cp src/api/z3*.h include/
+          cp src/api/c++/z3++.h include/c++/
+          cp build-shared/src/util/z3_version.h include/
+
+          # 2. Shared package: libz3.so (with version symlinks) + headers.
+          mkdir -p pkg-shared/lib
+          cp -a build-shared/libz3.so* pkg-shared/lib/
+          cp -r include pkg-shared/include
+          tar -czf "z3-${version}-linux-${arch}-shared.tar.gz" -C pkg-shared .
+
+          # 3. Static package: libz3.a + headers.
+          mkdir -p pkg-static/lib
+          cp build-static/libz3.a pkg-static/lib/
+          cp -r include pkg-static/include
+          tar -czf "z3-${version}-linux-${arch}-static.tar.gz" -C pkg-static .
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: z3-linux-${{ matrix.arch }}
+          path: z3-*.tar.gz
+
+  # 4. Publish the versioned release and re-point the alias tag.
+  release:
+    needs: [ version, build-windows, build-linux ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish versioned release and move alias tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          ALIAS: ${{ needs.version.outputs.alias }}
+        run: |
+          set -euo pipefail
+
+          # 1. Immutable per-build release on the 4-part tag (also marked latest).
+          gh release create "${VERSION}" \
+            --target "${GITHUB_SHA}" \
+            --title "${VERSION}" \
+            --notes "Automated build of Z3 ${ALIAS#v} (build ${GITHUB_RUN_NUMBER}) for windows/linux x64 and x86. Windows libraries use the static CRT; Linux libraries statically link libstdc++/libgcc. No external runtime required." \
+            --latest \
+            $(find dist -type f | sort)
+
+          # 2. Re-point the 3-part alias tag to this build's commit.
+          git tag --force "${ALIAS}" "${GITHUB_SHA}"
+          git push --force origin "refs/tags/${ALIAS}"
