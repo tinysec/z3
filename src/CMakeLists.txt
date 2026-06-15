@@ -122,21 +122,13 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   target_link_options(libz3 PRIVATE "-Wl,-headerpad_max_install_names")
 endif()
 
-if (NOT MSVC)
-  # On UNIX like platforms if we don't change the OUTPUT_NAME
-  # the library gets a name like ``liblibz3.so`` so we change it
-  # here. We don't do a rename with MSVC because we get file naming
-  # conflicts (the z3 executable also has this OUTPUT_NAME) with
-  # ``.ilk``, ``.pdb``, ``.lib`` and ``.exp`` files sharing the same
-  # prefix.
-  set_target_properties(libz3 PROPERTIES OUTPUT_NAME z3)
-elseif (NOT Z3_BUILD_EXECUTABLE)
-  # The conflict described above only exists when the z3 executable is also
-  # built (it shares the OUTPUT_NAME ``z3``). When we build the library alone
-  # there is no collision, so name it ``z3`` as well, producing ``z3.dll`` /
-  # ``z3.lib`` instead of ``libz3.dll`` / ``libz3.lib``.
-  set_target_properties(libz3 PROPERTIES OUTPUT_NAME z3)
-endif()
+# Always name the library z3: z3.dll / z3.lib on Windows, libz3.so / libz3.a on
+# UNIX (the lib prefix is added by the platform). Upstream keeps the MSVC name as
+# libz3 to avoid colliding with the z3 executable's files, but this fork builds
+# the library only (no executable by default) and wants a consistent z3.dll name
+# everywhere. Do not enable the z3 executable together with this rename on MSVC:
+# z3.exe and z3.dll would share the z3.pdb name.
+set_target_properties(libz3 PROPERTIES OUTPUT_NAME z3)
 
 # Provide a namespaced alias so consumers that build Z3 from source via
 # FetchContent / add_subdirectory can link it as z3::z3 — the same target name
@@ -263,7 +255,10 @@ if (MSVC)
       "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/scripts/mk_def_file.py"
       "${dll_module_exports_file}"
-      "libz3"
+      # The .def LIBRARY name must match the actual DLL output name, otherwise the
+      # generated import library tells consumers to load the wrong DLL (e.g.
+      # libz3.dll when OUTPUT_NAME made the file z3.dll). Use the real base name.
+      "$<TARGET_FILE_BASE_NAME:libz3>"
       ${Z3_FULL_PATH_API_HEADER_FILES_TO_SCAN}
     DEPENDS
       "${PROJECT_SOURCE_DIR}/scripts/mk_def_file.py"
