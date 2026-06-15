@@ -334,6 +334,22 @@ To build the shared library instead, set `set(Z3_BUILD_LIBZ3_SHARED ON)` before
 `FetchContent_MakeAvailable`. Building Z3 from source requires Python 3 and, on
 Windows, Visual Studio.
 
+Whether the result depends on the VC++ runtime (`VCRUNTIME140.dll` /
+`MSVCP140.dll`) is controlled by the MSVC runtime option. For a self-contained
+build with no VC++ runtime dependency, select the static runtime (`/MT`) for the
+whole project — your executable and Z3 must match — before
+`FetchContent_MakeAvailable`:
+
+```cmake
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+```
+
+Leaving it unset keeps the default dynamic runtime (`/MD`), which depends on the
+VC++ runtime. Use `CMAKE_MSVC_RUNTIME_LIBRARY` here rather than
+`Z3_BUILD_LIBZ3_MSVC_STATIC`: the latter only switches Z3 to `/MT` and would
+leave your `/MD` executable mismatched (LNK2038). It is meant for standalone /
+CI builds where Z3 is the whole project.
+
 ### Consume from Rust
 
 Use the upstream `z3` / `z3-sys` crates (no fork needed — the C API is identical)
