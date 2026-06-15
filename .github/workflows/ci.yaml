@@ -44,6 +44,7 @@ jobs:
           echo "Versioned tag: ${VERSION}"
 
   # 2. Windows libraries: z3.dll (shared) and z3.lib (static), both static-CRT.
+  # Each (architecture, link type) is its own job so they build in parallel.
   # Pinned to windows-2022 because the "Visual Studio 17 2022" generator must be
   # present; windows-latest has moved to a newer image without VS 2022.
   build-windows:
@@ -53,62 +54,60 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x64
-            cmake_platform: x64
-          - arch: x86
-            cmake_platform: Win32
+          - { arch: x64, cmake_platform: x64,   link: shared, shared: "ON"  }
+          - { arch: x64, cmake_platform: x64,   link: static, shared: "OFF" }
+          - { arch: x86, cmake_platform: Win32, link: shared, shared: "ON"  }
+          - { arch: x86, cmake_platform: Win32, link: static, shared: "OFF" }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Configure shared library (z3.dll)
+      - name: Configure
         run: >
-          cmake -B build-shared -S . -G "Visual Studio 17 2022" -A ${{ matrix.cmake_platform }}
-          -DZ3_BUILD_LIBZ3_SHARED=ON
+          cmake -B build -S . -G "Visual Studio 17 2022" -A ${{ matrix.cmake_platform }}
+          -DZ3_BUILD_LIBZ3_SHARED=${{ matrix.shared }}
 
-      - name: Build shared library
-        run: cmake --build build-shared --config Release --target libz3 --parallel
+      - name: Build
+        run: cmake --build build --config Release --target libz3 --parallel
 
-      - name: Configure static library (z3.lib)
-        run: >
-          cmake -B build-static -S . -G "Visual Studio 17 2022" -A ${{ matrix.cmake_platform }}
-          -DZ3_BUILD_LIBZ3_SHARED=OFF
-
-      - name: Build static library
-        run: cmake --build build-static --config Release --target libz3 --parallel
-
-      - name: Package release archives
+      - name: Package shared archive (z3.dll + PDB + import lib + headers)
+        if: matrix.link == 'shared'
         shell: pwsh
         run: |
           $version = "${{ needs.version.outputs.version }}"
           $arch = "${{ matrix.arch }}"
 
-          # 1. Collect public headers (source headers + generated z3_version.h).
-          New-Item -ItemType Directory -Force include, include/c++ | Out-Null
-          Copy-Item src/api/z3*.h include/
-          Copy-Item src/api/c++/z3++.h include/c++/
-          Copy-Item build-shared/src/util/z3_version.h include/
+          New-Item -ItemType Directory -Force pkg/bin, pkg/lib, pkg/include/c++ | Out-Null
+          Copy-Item build/Release/z3.dll pkg/bin/
+          Copy-Item build/Release/z3.pdb pkg/bin/
+          Copy-Item build/Release/z3.lib pkg/lib/
+          Copy-Item src/api/z3*.h pkg/include/
+          Copy-Item src/api/c++/z3++.h pkg/include/c++/
+          Copy-Item build/src/util/z3_version.h pkg/include/
+          Compress-Archive -Path pkg/* -DestinationPath "z3-$version-windows-$arch-shared.zip"
 
-          # 2. Shared package: z3.dll + import library + headers.
-          New-Item -ItemType Directory -Force pkg-shared/bin, pkg-shared/lib | Out-Null
-          Copy-Item build-shared/Release/z3.dll pkg-shared/bin/
-          Copy-Item build-shared/Release/z3.lib pkg-shared/lib/
-          Copy-Item include pkg-shared/include -Recurse
-          Compress-Archive -Path pkg-shared/* -DestinationPath "z3-$version-windows-$arch-shared.zip"
+      - name: Package static archive (z3.lib + headers)
+        if: matrix.link == 'static'
+        shell: pwsh
+        run: |
+          $version = "${{ needs.version.outputs.version }}"
+          $arch = "${{ matrix.arch }}"
 
-          # 3. Static package: z3.lib + headers.
-          New-Item -ItemType Directory -Force pkg-static/lib | Out-Null
-          Copy-Item build-static/Release/z3.lib pkg-static/lib/
-          Copy-Item include pkg-static/include -Recurse
-          Compress-Archive -Path pkg-static/* -DestinationPath "z3-$version-windows-$arch-static.zip"
+          New-Item -ItemType Directory -Force pkg/lib, pkg/include/c++ | Out-Null
+          Copy-Item build/Release/z3.lib pkg/lib/
+          Copy-Item src/api/z3*.h pkg/include/
+          Copy-Item src/api/c++/z3++.h pkg/include/c++/
+          Copy-Item build/src/util/z3_version.h pkg/include/
+          Compress-Archive -Path pkg/* -DestinationPath "z3-$version-windows-$arch-static.zip"
 
-      - name: Upload Windows artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: z3-windows-${{ matrix.arch }}
+          name: z3-windows-${{ matrix.arch }}-${{ matrix.link }}
           path: z3-*.zip
 
   # 3. Linux libraries: libz3.so (shared) and libz3.a (static).
+  # Each (architecture, link type) is its own job so they build in parallel.
   build-linux:
     needs: version
     runs-on: ubuntu-latest
@@ -116,12 +115,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x64
-            bits: ""
-            extra_packages: ""
-          - arch: x86
-            bits: "-m32"
-            extra_packages: "gcc-multilib g++-multilib"
+          - { arch: x64, bits: "",     extra_packages: "",                          link: shared, shared: "ON"  }
+          - { arch: x64, bits: "",     extra_packages: "",                          link: static, shared: "OFF" }
+          - { arch: x86, bits: "-m32", extra_packages: "gcc-multilib g++-multilib", link: shared, shared: "ON"  }
+          - { arch: x86, bits: "-m32", extra_packages: "gcc-multilib g++-multilib", link: static, shared: "OFF" }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -132,57 +129,51 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ${{ matrix.extra_packages }}
 
-      - name: Configure shared library (libz3.so, static libstdc++/libgcc)
+      - name: Configure
         run: >
-          cmake -B build-shared -S . -DCMAKE_BUILD_TYPE=Release
-          -DZ3_BUILD_LIBZ3_SHARED=ON
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+          -DZ3_BUILD_LIBZ3_SHARED=${{ matrix.shared }}
           "-DCMAKE_C_FLAGS=${{ matrix.bits }}"
           "-DCMAKE_CXX_FLAGS=${{ matrix.bits }}"
           "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc ${{ matrix.bits }}"
 
-      - name: Build shared library
+      - name: Build
         # Explicit job count: a bare --parallel makes Make use unlimited jobs,
         # which exhausts the runner's memory and gets it killed (exit 143).
-        run: cmake --build build-shared --target libz3 --parallel "$(nproc)"
+        run: cmake --build build --target libz3 --parallel "$(nproc)"
 
-      - name: Configure static library (libz3.a)
-        run: >
-          cmake -B build-static -S . -DCMAKE_BUILD_TYPE=Release
-          -DZ3_BUILD_LIBZ3_SHARED=OFF
-          "-DCMAKE_C_FLAGS=${{ matrix.bits }}"
-          "-DCMAKE_CXX_FLAGS=${{ matrix.bits }}"
-
-      - name: Build static library
-        run: cmake --build build-static --target libz3 --parallel "$(nproc)"
-
-      - name: Package release archives
+      - name: Package shared archive (libz3.so + headers)
+        if: matrix.link == 'shared'
         run: |
           set -euo pipefail
           version="${{ needs.version.outputs.version }}"
           arch="${{ matrix.arch }}"
 
-          # 1. Collect public headers (source headers + generated z3_version.h).
-          mkdir -p include/c++
-          cp src/api/z3*.h include/
-          cp src/api/c++/z3++.h include/c++/
-          cp build-shared/src/util/z3_version.h include/
+          mkdir -p pkg/lib pkg/include/c++
+          cp -a build/libz3.so* pkg/lib/
+          cp src/api/z3*.h pkg/include/
+          cp src/api/c++/z3++.h pkg/include/c++/
+          cp build/src/util/z3_version.h pkg/include/
+          tar -czf "z3-${version}-linux-${arch}-shared.tar.gz" -C pkg .
 
-          # 2. Shared package: libz3.so (with version symlinks) + headers.
-          mkdir -p pkg-shared/lib
-          cp -a build-shared/libz3.so* pkg-shared/lib/
-          cp -r include pkg-shared/include
-          tar -czf "z3-${version}-linux-${arch}-shared.tar.gz" -C pkg-shared .
+      - name: Package static archive (libz3.a + headers)
+        if: matrix.link == 'static'
+        run: |
+          set -euo pipefail
+          version="${{ needs.version.outputs.version }}"
+          arch="${{ matrix.arch }}"
 
-          # 3. Static package: libz3.a + headers.
-          mkdir -p pkg-static/lib
-          cp build-static/libz3.a pkg-static/lib/
-          cp -r include pkg-static/include
-          tar -czf "z3-${version}-linux-${arch}-static.tar.gz" -C pkg-static .
+          mkdir -p pkg/lib pkg/include/c++
+          cp build/libz3.a pkg/lib/
+          cp src/api/z3*.h pkg/include/
+          cp src/api/c++/z3++.h pkg/include/c++/
+          cp build/src/util/z3_version.h pkg/include/
+          tar -czf "z3-${version}-linux-${arch}-static.tar.gz" -C pkg .
 
-      - name: Upload Linux artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: z3-linux-${{ matrix.arch }}
+          name: z3-linux-${{ matrix.arch }}-${{ matrix.link }}
           path: z3-*.tar.gz
 
   # 4. Publish the versioned release and re-point the alias tag.

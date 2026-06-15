@@ -459,6 +459,20 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 endif()
 
 ################################################################################
+# Emit PDB debug symbols for MSVC Release builds
+################################################################################
+# A default Release build emits no PDB. Generate one with optimized symbols so
+# the release packages can ship z3.pdb next to z3.dll. /OPT:REF and /OPT:ICF
+# are re-added because /DEBUG disables them by default, which would bloat the
+# binary.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  add_compile_options($<$<CONFIG:Release>:/Zi>)
+  add_link_options($<$<CONFIG:Release>:/DEBUG>)
+  add_link_options($<$<CONFIG:Release>:/OPT:REF>)
+  add_link_options($<$<CONFIG:Release>:/OPT:ICF>)
+endif()
+
+################################################################################
 # Check atomic linking as needed
 ################################################################################
 include(${PROJECT_SOURCE_DIR}/cmake/check_link_atomic.cmake)
